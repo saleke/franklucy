@@ -28,11 +28,11 @@ async function runReconciliationTests() {
     // 1. Setup & Resolve Users
     console.log("--- PHASE 1: Baseline Context Resolution ---");
     const cashierUser = await prisma.user.findUniqueOrThrow({
-      where: { email: "cashier@branchflow.com" },
+      where: { email: "cashier@franklucy.com" },
       include: { employee: true },
     });
     const managerUser = await prisma.user.findUniqueOrThrow({
-      where: { email: "manager@branchflow.com" },
+      where: { email: "manager@franklucy.com" },
       include: { employee: true },
     });
     const mainBranch = await prisma.branch.findUniqueOrThrow({

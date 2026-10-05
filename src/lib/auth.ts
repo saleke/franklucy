@@ -5,7 +5,6 @@ import { db } from "@/lib/db";
 import crypto from "crypto";
 
 const SESSION_COOKIE_NAME = "franklucy_session";
-const LEGACY_SESSION_COOKIE_NAME = "branchflow_session";
 
 const AUTH_SECRET =
   process.env.AUTH_SECRET ||
@@ -112,7 +111,6 @@ export async function setSessionCookie(
 export async function clearSessionCookie() {
   const cookieStore = cookies();
   cookieStore.delete(SESSION_COOKIE_NAME);
-  cookieStore.delete(LEGACY_SESSION_COOKIE_NAME);
 }
 
 /**
@@ -120,8 +118,7 @@ export async function clearSessionCookie() {
  */
 export async function getCurrentUser(): Promise<SessionUser | null> {
   const cookieStore = cookies();
-  const sessionCookie =
-    cookieStore.get(SESSION_COOKIE_NAME) || cookieStore.get(LEGACY_SESSION_COOKIE_NAME);
+  const sessionCookie = cookieStore.get(SESSION_COOKIE_NAME);
 
   if (!sessionCookie?.value) {
     return null;

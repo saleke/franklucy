@@ -38,15 +38,15 @@ async function runE2ETests() {
     assert(!!mainBranch && !!ikejaBranch, "Main and Ikeja branches identified");
 
     const cashierUser = await db.user.findUniqueOrThrow({
-      where: { email: "cashier@branchflow.com" },
+      where: { email: "cashier@franklucy.com" },
       include: { employee: true },
     });
     const managerUser = await db.user.findUniqueOrThrow({
-      where: { email: "manager@branchflow.com" },
+      where: { email: "manager@franklucy.com" },
       include: { employee: true },
     });
     const stockUser = await db.user.findUniqueOrThrow({
-      where: { email: "stock@branchflow.com" },
+      where: { email: "stock@franklucy.com" },
       include: { employee: true },
     });
     assert(!!cashierUser.employee && !!managerUser.employee && !!stockUser.employee, "Staff employees linked to user accounts");

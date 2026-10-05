@@ -13,8 +13,8 @@ export async function POST(request: Request) {
       );
     }
 
-    let lookupEmail = email.toLowerCase().trim();
-    let user = await db.user.findUnique({
+    const lookupEmail = email.toLowerCase().trim();
+    const user = await db.user.findUnique({
       where: { email: lookupEmail },
       include: {
         employee: {
@@ -29,24 +29,6 @@ export async function POST(request: Request) {
         },
       },
     });
-
-    if (!user && lookupEmail.includes("@branchflow.com")) {
-      user = await db.user.findUnique({
-        where: { email: lookupEmail.replace("@branchflow.com", "@franklucy.com") },
-        include: {
-          employee: {
-            include: {
-              branchAssignments: {
-                where: { endDate: null },
-              },
-            },
-          },
-          roles: {
-            include: { role: true },
-          },
-        },
-      });
-    }
 
     if (!user || user.status !== "ACTIVE") {
       return NextResponse.json(

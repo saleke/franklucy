@@ -1,0 +1,43 @@
+{
+  "title": "FrankLucy Operations Platform",
+  "description": "A multi branch operations platform for beverage distribution covering point of sale, inventory, cash reconciliation, and staff control.",
+  "context": "A production shaped build for running sales, stock, and cash across every branch of one distribution business.",
+  "overview": "FrankLucy gives a multi branch distributor a single place to sell, track stock, manage staff, and balance the cash drawer.",
+  "problem": "Branch based distributors tend to run sales, stock, and cash in separate notebooks or spreadsheets, so stock levels drift and cash variances surface later with no record of who made the change.",
+  "solution": "The platform puts point of sale, a per branch inventory ledger, inter branch transfers, attendance, and drawer reconciliation behind one login, and writes every action to an audit log.",
+  "architecture": "A Next.js App Router frontend calls route handlers that delegate to service modules. Services recheck permissions and branch scope, run writes inside PostgreSQL transactions through Prisma, and record an audit entry for each operation.",
+  "decisions": [
+    "Resolve prices, stock, and permissions on the server so the browser cannot change them.",
+    "Scope every query to the active branch and verify access on each request instead of trusting the interface.",
+    "Keep business rules in service modules with zod validation so sales, transfers, and reconciliation can be tested without the browser."
+  ],
+  "features": [
+    "Point of sale with bulk and piece pricing",
+    "Per branch inventory ledger and goods receiving",
+    "Inter branch stock transfers",
+    "Cash drawer sessions with variance tracking",
+    "Attendance clock in with correction approvals",
+    "Customer accounts with credit balances",
+    "Role based access across five staff roles",
+    "Audit trail for every recorded action",
+    "Printable invoices in A4 and thermal formats",
+    "Daily dashboard with revenue, cash, and low stock alerts"
+  ],
+  "technologies": [
+    "Next.js 14",
+    "React",
+    "TypeScript",
+    "PostgreSQL",
+    "Prisma",
+    "Tailwind CSS",
+    "Zod",
+    "decimal.js"
+  ],
+  "images": [],
+  "status": "completed",
+  "featured": true,
+  "githubUrl": "https://github.com/saleke/franklucy",
+  "liveUrl": null,
+  "eyebrow": "PROJECT / 05",
+  "order": 5
+}
