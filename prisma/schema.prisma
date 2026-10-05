@@ -1,0 +1,696 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// ----------------------------------------------------
+// ENUMS
+// ----------------------------------------------------
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum EmployeeStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum BranchStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum ProductStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum InventoryUnit {
+  CRATE
+  PACK
+  PIECE
+  CARTON
+  BOTTLE
+  CAN
+  ROLL
+  BAG
+  KEG
+  DOZEN
+  OTHER
+}
+
+enum SaleStatus {
+  DRAFT
+  COMPLETED
+  VOIDED
+}
+
+enum PaymentMethod {
+  CASH
+  BANK_TRANSFER
+  OTHER
+}
+
+enum PaymentStatus {
+  PENDING
+  COMPLETED
+  REFUNDED
+}
+
+enum InventoryMovementType {
+  OPENING_STOCK
+  PURCHASE
+  SALE
+  TRANSFER_IN
+  TRANSFER_OUT
+  RETURN_IN
+  DAMAGED
+  EXPIRED
+  ADJUSTMENT
+}
+
+enum AttendanceStatus {
+  PRESENT
+  LATE
+  ABSENT
+  EARLY_LEAVE
+  INCOMPLETE
+}
+
+enum CorrectionStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum HandoverStatus {
+  PENDING_HANDOVER
+  HANDED_OVER
+}
+
+enum CashSessionStatus {
+  OPEN
+  CLOSED
+}
+
+// ----------------------------------------------------
+// AUTHENTICATION & IDENTITY
+// ----------------------------------------------------
+
+model User {
+  id           String     @id @default(cuid())
+  email        String     @unique
+  username     String?    @unique
+  passwordHash String
+  status       UserStatus @default(ACTIVE)
+
+  employee Employee?
+
+  roles           UserRole[]
+  auditLogs       AuditLog[]
+  idempotencyKeys IdempotencyKey[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([email])
+}
+
+model Employee {
+  id             String         @id @default(cuid())
+  userId         String?        @unique
+  employeeNumber String         @unique
+  firstName      String
+  lastName       String
+  phone          String?
+  status         EmployeeStatus @default(ACTIVE)
+
+  user User? @relation(fields: [userId], references: [id])
+
+  branchAssignments  EmployeeBranchAssignment[]
+  sales              Sale[]
+  attendances        Attendance[]
+  reconciliations    CashReconciliation[]
+  handoversGiven     CashHandover[]             @relation("HandoverGiven")
+  handoversReceived  CashHandover[]             @relation("HandoverReceived")
+  movementsCreated   InventoryMovement[]
+  transfersCreated   StockTransfer[]
+  priceChanges       ProductPriceHistory[]
+  cashSessions       CashSession[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([lastName, firstName])
+}
+
+model Role {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+
+  users       UserRole[]
+  permissions RolePermission[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model UserRole {
+  userId String
+  roleId String
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([userId, roleId])
+}
+
+model Permission {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+
+  roles RolePermission[]
+
+  createdAt DateTime @default(now())
+}
+
+model RolePermission {
+  roleId       String
+  permissionId String
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+}
+
+// ----------------------------------------------------
+// BRANCHES & ASSIGNMENTS
+// ----------------------------------------------------
+
+model Branch {
+  id      String       @id @default(cuid())
+  name    String
+  code    String       @unique
+  address String?
+  phone   String?
+  status  BranchStatus @default(ACTIVE)
+
+  openingTime        String       @default("08:00")
+  closingTime        String       @default("17:00")
+  gracePeriodMinutes Int          @default(15)
+
+  employeeAssignments EmployeeBranchAssignment[]
+  products            BranchProduct[]
+  sales               Sale[]
+  inventoryMovements  InventoryMovement[]
+  auditLogs           AuditLog[]
+  attendances         Attendance[]
+  cashReconciliations CashReconciliation[]
+  cashHandovers       CashHandover[]
+  transfersOut        StockTransfer[]            @relation("TransferSource")
+  transfersIn         StockTransfer[]            @relation("TransferDestination")
+  invoiceSequence     BranchInvoiceSequence?
+  transferSequence    BranchTransferSequence?
+  cashSessions        CashSession[]
+  cashSessionSequence BranchCashSessionSequence?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+}
+
+model EmployeeBranchAssignment {
+  id         String    @id @default(cuid())
+  employeeId String
+  branchId   String
+  startDate  DateTime
+  endDate    DateTime?
+  assignedBy String?
+  reason     String?
+
+  employee Employee @relation(fields: [employeeId], references: [id])
+  branch   Branch   @relation(fields: [branchId], references: [id])
+
+  createdAt DateTime @default(now())
+
+  @@index([employeeId, startDate])
+  @@index([branchId, startDate])
+}
+
+// ----------------------------------------------------
+// PRODUCTS, PRICING & INVENTORY
+// ----------------------------------------------------
+
+model UnitOfMeasurement {
+  id          String   @id @default(cuid())
+  code        String   @unique
+  name        String
+  description String?
+  scaleType        String   @default("UNIVERSAL")
+  defaultPieceUnit String?
+  defaultRatio     Int?
+  isDefault        Boolean  @default(false)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([code])
+}
+
+model Product {
+  id            String        @id @default(cuid())
+  sku           String        @unique
+  name          String
+  category      String?
+  inventoryUnit String        @default("CRATE")
+  bulkUnit      String        @default("CRATE")
+  pieceUnit     String        @default("PIECE")
+  piecesPerBulk Int           @default(1)
+  status        ProductStatus @default(ACTIVE)
+
+  branchProducts     BranchProduct[]
+  saleItems          SaleItem[]
+  inventoryMovements InventoryMovement[]
+  transferItems      StockTransferItem[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([name])
+  @@index([category])
+  @@index([status])
+}
+
+model BranchProduct {
+  id           String        @id @default(cuid())
+  branchId     String
+  productId    String
+  sellingPrice Decimal       @db.Decimal(14, 2)
+  piecePrice   Decimal?      @db.Decimal(14, 2)
+  currentStock Int           @default(0)
+  reorderLevel Int           @default(10)
+  status       ProductStatus @default(ACTIVE)
+
+  branch       Branch                @relation(fields: [branchId], references: [id])
+  product      Product               @relation(fields: [productId], references: [id])
+  priceHistory ProductPriceHistory[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([branchId, productId])
+  @@index([branchId, status])
+}
+
+model ProductPriceHistory {
+  id              String   @id @default(cuid())
+  branchProductId String
+  oldPrice        Decimal  @db.Decimal(14, 2)
+  newPrice        Decimal  @db.Decimal(14, 2)
+  changedBy       String
+  reason          String?
+  createdAt       DateTime @default(now())
+
+  branchProduct BranchProduct @relation(fields: [branchProductId], references: [id])
+  employee      Employee      @relation(fields: [changedBy], references: [id])
+
+  @@index([branchProductId, createdAt])
+}
+
+model InventoryMovement {
+  id            String                @id @default(cuid())
+  branchId      String
+  productId     String
+  type          InventoryMovementType
+  quantity      Int
+  referenceType String?
+  referenceId   String?
+  saleId        String?
+  reason        String?
+  createdBy     String
+  createdAt     DateTime              @default(now())
+
+  branch   Branch   @relation(fields: [branchId], references: [id])
+  product  Product  @relation(fields: [productId], references: [id])
+  employee Employee @relation(fields: [createdBy], references: [id])
+  sale     Sale?    @relation(fields: [saleId], references: [id])
+
+  @@index([branchId, productId, createdAt])
+  @@index([referenceType, referenceId])
+  @@index([saleId])
+}
+
+// ----------------------------------------------------
+// CUSTOMERS & ACCOUNTS
+// ----------------------------------------------------
+
+model Customer {
+  id          String   @id @default(cuid())
+  name        String
+  phone       String?
+  address     String?
+  creditLimit Decimal  @default(0) @db.Decimal(14, 2)
+  status      String   @default("ACTIVE")
+
+  sales Sale[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([name])
+  @@index([phone])
+}
+
+// ----------------------------------------------------
+// SALES & PAYMENTS
+// ----------------------------------------------------
+
+model Sale {
+  id            String     @id @default(cuid())
+  invoiceNumber String     @unique
+  branchId      String
+  customerId    String?
+  cashierId     String
+  status        SaleStatus @default(COMPLETED)
+
+  subtotal Decimal @db.Decimal(14, 2)
+  discount Decimal @default(0) @db.Decimal(14, 2)
+  total    Decimal @db.Decimal(14, 2)
+  notes    String?
+
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  branch   Branch    @relation(fields: [branchId], references: [id])
+  customer Customer? @relation(fields: [customerId], references: [id])
+  cashier  Employee  @relation(fields: [cashierId], references: [id])
+
+  items              SaleItem[]
+  payments           Payment[]
+  inventoryMovements InventoryMovement[]
+
+  @@index([branchId, createdAt])
+  @@index([cashierId, createdAt])
+  @@index([customerId, status])
+  @@index([customerId, createdAt])
+  @@index([status])
+}
+
+model SaleItem {
+  id         String  @id @default(cuid())
+  saleId     String
+  productId  String
+  quantity   Int
+  unitPrice  Decimal @db.Decimal(14, 2)
+  discount   Decimal @default(0) @db.Decimal(14, 2)
+  lineTotal  Decimal @db.Decimal(14, 2)
+  unitType   String  @default("BULK") // "BULK" | "PIECE"
+  unitName   String? // e.g. "CRATE", "BOTTLE"
+  piecesSold Int     @default(1)
+
+  sale    Sale    @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id])
+
+  @@index([saleId])
+}
+
+model Payment {
+  id           String        @id @default(cuid())
+  saleId       String
+  amount       Decimal       @db.Decimal(14, 2)
+  cashReceived Decimal?      @db.Decimal(14, 2)
+  changeGiven  Decimal?      @db.Decimal(14, 2)
+  method       PaymentMethod
+  status       PaymentStatus @default(COMPLETED)
+  reference    String?
+  receivedBy   String
+  createdAt    DateTime      @default(now())
+
+  sale Sale @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  cashSessionId String?
+  cashSession   CashSession? @relation(fields: [cashSessionId], references: [id])
+
+  @@index([saleId])
+  @@index([cashSessionId])
+  @@index([method])
+  @@index([createdAt])
+}
+
+// ----------------------------------------------------
+// STOCK TRANSFERS (Component 20)
+// ----------------------------------------------------
+
+model StockTransfer {
+  id                  String   @id @default(cuid())
+  referenceNumber     String   @unique
+  sourceBranchId      String
+  destinationBranchId String
+  createdBy           String
+  reason              String?
+  notes               String?
+  status              String   @default("COMPLETED")
+  createdAt           DateTime @default(now())
+
+  sourceBranch      Branch   @relation("TransferSource", fields: [sourceBranchId], references: [id])
+  destinationBranch Branch   @relation("TransferDestination", fields: [destinationBranchId], references: [id])
+  employee          Employee @relation(fields: [createdBy], references: [id])
+
+  items StockTransferItem[]
+
+  @@index([sourceBranchId, createdAt])
+  @@index([destinationBranchId, createdAt])
+}
+
+model StockTransferItem {
+  id                String  @id @default(cuid())
+  transferId        String
+  productId         String
+  quantity          Int
+  unitType          String  @default("BULK") // "BULK" | "PIECE"
+  unitName          String? // e.g. "CRATE", "BOTTLE"
+  piecesTransferred Int     @default(1)
+
+  transfer StockTransfer @relation(fields: [transferId], references: [id], onDelete: Cascade)
+  product  Product       @relation(fields: [productId], references: [id])
+
+  @@unique([transferId, productId, unitType])
+}
+
+// ----------------------------------------------------
+// SEQUENCES FOR CONCURRENCY-SAFE HUMAN IDENTIFIERS
+// ----------------------------------------------------
+
+model BranchInvoiceSequence {
+  branchId   String @id
+  nextNumber Int    @default(1)
+
+  branch Branch @relation(fields: [branchId], references: [id])
+}
+
+model BranchTransferSequence {
+  branchId   String @id
+  nextNumber Int    @default(1)
+
+  branch Branch @relation(fields: [branchId], references: [id])
+}
+
+// ----------------------------------------------------
+// ATTENDANCE & TIME
+// ----------------------------------------------------
+
+model Attendance {
+  id        String           @id @default(cuid())
+  employeeId String
+  branchId  String
+  workDate  DateTime         @db.Date
+  clockIn   DateTime
+  clockOut  DateTime?
+  status    AttendanceStatus @default(PRESENT)
+  source    String?          @default("WEB")
+
+  employee Employee @relation(fields: [employeeId], references: [id])
+  branch   Branch   @relation(fields: [branchId], references: [id])
+
+  corrections AttendanceCorrection[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([employeeId, workDate])
+  @@index([branchId, workDate])
+}
+
+model AttendanceCorrection {
+  id               String           @id @default(cuid())
+  attendanceId     String
+  originalClockIn  DateTime?
+  correctedClockIn DateTime?
+  reason           String
+  requestedBy      String
+  approvedBy       String?
+  status           CorrectionStatus @default(PENDING)
+
+  attendance Attendance @relation(fields: [attendanceId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([attendanceId])
+  @@index([status])
+}
+
+// ----------------------------------------------------
+// CASH RECONCILIATION & HANDOVER
+// ----------------------------------------------------
+
+model CashReconciliation {
+  id             String   @id @default(cuid())
+  branchId       String
+  businessDate   DateTime @db.Date
+  expectedAmount Decimal  @db.Decimal(14, 2)
+  actualAmount   Decimal  @db.Decimal(14, 2)
+  difference     Decimal  @db.Decimal(14, 2)
+  countedBy      String
+  reviewedBy     String?
+  status         String   @default("COMPLETED")
+  notes          String?
+
+  branch   Branch   @relation(fields: [branchId], references: [id])
+  employee Employee @relation(fields: [countedBy], references: [id])
+  handover CashHandover?
+
+  createdAt DateTime @default(now())
+
+  @@index([branchId, businessDate])
+}
+
+model CashSession {
+  id              String            @id @default(cuid())
+  referenceNumber String            @unique
+  branchId        String
+  cashierId       String
+  status          CashSessionStatus @default(OPEN)
+  openingCash     Decimal           @db.Decimal(14, 2)
+  closingCash     Decimal?          @db.Decimal(14, 2)
+
+  expectedCash     Decimal?          @db.Decimal(14, 2)
+  declaredCash     Decimal?          @db.Decimal(14, 2)
+  cashVariance     Decimal?          @db.Decimal(14, 2)
+
+  expectedTransfer Decimal?          @db.Decimal(14, 2)
+  declaredTransfer Decimal?          @db.Decimal(14, 2)
+  transferVariance Decimal?          @db.Decimal(14, 2)
+
+  openedAt        DateTime          @default(now())
+  closedAt        DateTime?
+  closedBy        String?
+  notes           String?
+
+  branch   Branch    @relation(fields: [branchId], references: [id])
+  cashier  Employee  @relation(fields: [cashierId], references: [id])
+  payments Payment[]
+  payouts  CashSessionPayout[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([branchId, status])
+  @@index([cashierId, status])
+  @@index([openedAt])
+}
+
+model CashSessionPayout {
+  id            String       @id @default(cuid())
+  cashSessionId String
+  amount        Decimal      @db.Decimal(14, 2)
+  category      String       // FUEL, LOGISTICS, SUPPLIES, CASH_DROP, OWNER_WITHDRAWAL, OTHER
+  recipient     String?
+  reason        String
+  reference     String?
+  authorizedBy  String
+  createdAt     DateTime     @default(now())
+
+  cashSession   CashSession  @relation(fields: [cashSessionId], references: [id], onDelete: Cascade)
+
+  @@index([cashSessionId])
+  @@index([createdAt])
+}
+
+model BranchCashSessionSequence {
+  branchId   String @id
+  nextNumber Int    @default(1)
+
+  branch Branch @relation(fields: [branchId], references: [id])
+}
+
+model CashHandover {
+  id               String         @id @default(cuid())
+  reconciliationId String         @unique
+  branchId         String
+  amount           Decimal        @db.Decimal(14, 2)
+  handedOverBy     String
+  receivedBy       String?
+  status           HandoverStatus @default(PENDING_HANDOVER)
+  notes            String?
+  receivedAt       DateTime?
+
+  reconciliation CashReconciliation @relation(fields: [reconciliationId], references: [id])
+  branch         Branch             @relation(fields: [branchId], references: [id])
+  giver          Employee           @relation("HandoverGiven", fields: [handedOverBy], references: [id])
+  receiver       Employee?          @relation("HandoverReceived", fields: [receivedBy], references: [id])
+
+  createdAt DateTime @default(now())
+
+  @@index([branchId, status])
+}
+
+// ----------------------------------------------------
+// AUDIT LOG & IDEMPOTENCY
+// ----------------------------------------------------
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  action      String
+  userId      String?
+  branchId    String?
+  entityType  String
+  entityId    String
+  description String
+  oldValue    Json?
+  newValue    Json?
+  reason      String?
+  createdAt   DateTime @default(now())
+
+  user   User?   @relation(fields: [userId], references: [id])
+  branch Branch? @relation(fields: [branchId], references: [id])
+
+  @@index([createdAt])
+  @@index([branchId, createdAt])
+  @@index([entityType, entityId])
+  @@index([action, createdAt])
+}
+
+model IdempotencyKey {
+  id           String   @id @default(cuid())
+  key          String   @unique
+  operation    String
+  userId       String
+  responseJson Json?
+  createdAt    DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId, operation])
+}
