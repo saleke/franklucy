@@ -181,6 +181,14 @@ async function main() {
 
   const staff = [
     {
+      email: "admin@franklucy.com",
+      firstName: "System",
+      lastName: "Administrator",
+      employeeNumber: "EMP-ADMIN",
+      role: ownerRole,
+      branches: [mainBranch, ikejaBranch, surulereBranch],
+    },
+    {
       email: "owner@franklucy.com",
       firstName: "Adeyemi",
       lastName: "Adeleke",

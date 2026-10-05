@@ -13,9 +13,14 @@ export async function POST(request: Request) {
       );
     }
 
-    const lookupEmail = email.toLowerCase().trim();
-    const user = await db.user.findUnique({
-      where: { email: lookupEmail },
+    const lookup = email.toLowerCase().trim();
+    const user = await db.user.findFirst({
+      where: {
+        OR: [
+          { email: lookup },
+          { username: lookup }
+        ]
+      },
       include: {
         employee: {
           include: {
