@@ -44,7 +44,11 @@ export default async function NewSalePage() {
     pieceUnit: bp.product.pieceUnit || "PIECE",
     piecesPerBulk: bp.product.piecesPerBulk || 1,
     sellingPrice: Number(bp.sellingPrice.toString()),
-    piecePrice: bp.piecePrice ? Number(bp.piecePrice.toString()) : null,
+    piecePrice: bp.piecePrice
+      ? Number(bp.piecePrice.toString())
+      : (bp.product.piecesPerBulk && bp.product.piecesPerBulk > 1
+          ? Math.ceil(Number(bp.sellingPrice.toString()) / bp.product.piecesPerBulk)
+          : null),
     currentStock: bp.currentStock,
     reorderLevel: bp.reorderLevel,
   }));

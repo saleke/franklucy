@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
@@ -20,6 +20,7 @@ import {
   Search,
   Check,
   Settings,
+  Loader2,
 } from "lucide-react";
 import { SessionUser } from "@/lib/auth";
 
@@ -37,6 +38,7 @@ export const AppShell: React.FC<AppShellProps> = ({ user, children }) => {
   const [branchMenuOpen, setBranchMenuOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [isSwitchingBranch, setIsSwitchingBranch] = useState(false);
+  const [navigatingHref, setNavigatingHref] = useState<string | null>(null);
 
   // Categorized navigation structure with role-based filtering
   const navSections = [
@@ -145,8 +147,39 @@ export const AppShell: React.FC<AppShellProps> = ({ user, children }) => {
     router.refresh();
   };
 
+  // Reset navigating indicator when pathname settles
+  useEffect(() => {
+    setNavigatingHref(null);
+  }, [pathname]);
+
+  // Pre-warm all accessible console routes in the background
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      allNavItems.forEach((item) => {
+        try {
+          router.prefetch(item.href);
+        } catch {
+          // ignore prefetch errors
+        }
+      });
+      try {
+        router.prefetch("/sales/new");
+      } catch {
+        // ignore prefetch errors
+      }
+    }, 150);
+    return () => clearTimeout(timer);
+  }, [allNavItems, router]);
+
   return (
     <div className="flex h-screen overflow-hidden bg-background">
+      {/* Top Global Screen Progress Indicator when switching tabs */}
+      {navigatingHref && (
+        <div className="fixed top-0 left-0 right-0 z-50 h-[3px] bg-slate-900/60 pointer-events-none overflow-hidden">
+          <div className="h-full w-full bg-gradient-to-r from-sky-400 via-teal-300 to-indigo-500 animate-progress-indeterminate shadow-[0_0_12px_rgba(56,189,248,0.9)]" />
+        </div>
+      )}
+
       {/* Desktop Sidebar */}
       <aside className="hidden md:flex flex-col w-64 border-r border-white/[0.08] bg-slate-950/85 backdrop-blur-2xl shrink-0 z-30 select-none">
         {/* Brand Header */}
@@ -169,14 +202,28 @@ export const AppShell: React.FC<AppShellProps> = ({ user, children }) => {
                   const active =
                     pathname === item.href ||
                     (item.href !== "/today" && pathname.startsWith(item.href));
+                  const isPending = navigatingHref === item.href;
 
                   return (
                     <Link
                       key={item.href}
                       href={item.href}
+                      prefetch={true}
+                      onMouseEnter={() => {
+                        try {
+                          router.prefetch(item.href);
+                        } catch {}
+                      }}
+                      onClick={() => {
+                        if (item.href !== pathname) {
+                          setNavigatingHref(item.href);
+                        }
+                      }}
                       className={`relative flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-medium transition-all duration-200 group ${
                         active
                           ? "bg-gradient-to-r from-sky-500/15 via-brand/10 to-transparent border border-sky-400/25 text-white font-semibold shadow-xs"
+                          : isPending
+                          ? "bg-sky-500/10 border border-sky-400/30 text-sky-200"
                           : "text-slate-400 hover:text-slate-100 hover:bg-white/[0.04]"
                       }`}
                     >
@@ -185,13 +232,17 @@ export const AppShell: React.FC<AppShellProps> = ({ user, children }) => {
                         <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-5 bg-gradient-to-b from-sky-400 to-teal-400 rounded-r-full shadow-[0_0_8px_rgba(56,189,248,0.8)]" />
                       )}
 
-                      <Icon
-                        className={`w-4 h-4 shrink-0 transition-transform duration-200 group-hover:scale-110 ${
-                          active
-                            ? "text-sky-400 drop-shadow-[0_0_8px_rgba(56,189,248,0.5)]"
-                            : "text-slate-400 group-hover:text-slate-200"
-                        }`}
-                      />
+                      {isPending ? (
+                        <Loader2 className="w-4 h-4 shrink-0 text-sky-400 animate-spin" />
+                      ) : (
+                        <Icon
+                          className={`w-4 h-4 shrink-0 transition-transform duration-200 group-hover:scale-110 ${
+                            active
+                              ? "text-sky-400 drop-shadow-[0_0_8px_rgba(56,189,248,0.5)]"
+                              : "text-slate-400 group-hover:text-slate-200"
+                          }`}
+                        />
+                      )}
 
                       <span className="truncate">{item.name}</span>
 
@@ -387,23 +438,41 @@ export const AppShell: React.FC<AppShellProps> = ({ user, children }) => {
               const active =
                 pathname === item.href ||
                 (item.href !== "/today" && pathname.startsWith(item.href));
+              const isPending = navigatingHref === item.href;
 
               return (
                 <Link
                   key={item.href}
                   href={item.href}
-                  onClick={() => setMobileOpen(false)}
+                  prefetch={true}
+                  onMouseEnter={() => {
+                    try {
+                      router.prefetch(item.href);
+                    } catch {}
+                  }}
+                  onClick={() => {
+                    setMobileOpen(false);
+                    if (item.href !== pathname) {
+                      setNavigatingHref(item.href);
+                    }
+                  }}
                   className={`flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-semibold transition-all ${
                     active
                       ? "bg-gradient-to-r from-sky-500/20 via-brand/10 to-transparent border border-sky-400/30 text-white shadow-xs"
+                      : isPending
+                      ? "bg-sky-500/10 border border-sky-400/30 text-sky-200"
                       : "text-slate-400 hover:text-white hover:bg-white/[0.05]"
                   }`}
                 >
-                  <Icon
-                    className={`w-4 h-4 ${
-                      active ? "text-sky-400" : "text-slate-400"
-                    }`}
-                  />
+                  {isPending ? (
+                    <Loader2 className="w-4 h-4 shrink-0 text-sky-400 animate-spin" />
+                  ) : (
+                    <Icon
+                      className={`w-4 h-4 ${
+                        active ? "text-sky-400" : "text-slate-400"
+                      }`}
+                    />
+                  )}
                   <span>{item.name}</span>
                   {item.badge && (
                     <span className="ml-auto text-[9px] font-bold px-1.5 py-0.5 rounded-md bg-emerald-500/15 text-emerald-400 border border-emerald-500/25">

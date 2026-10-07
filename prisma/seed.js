@@ -271,59 +271,78 @@ async function main() {
   console.log("✓ Employees and user accounts seeded");
 
   // 5. Products catalog
+  // 5. Products catalog with bulk and piece units
   const products = [
-    { sku: "HEIN-CRATE", name: "Heineken Premium Lager", category: "Beer", inventoryUnit: "CRATE" },
-    { sku: "GUIN-CRATE", name: "Guinness Foreign Extra Stout", category: "Stout", inventoryUnit: "CRATE" },
-    { sku: "MALT-PACK", name: "Maltina Classic (Pack)", category: "Malt", inventoryUnit: "PACK" },
-    { sku: "NUTRI-CRATE", name: "Nutri Milk Crate", category: "Dairy", inventoryUnit: "CRATE" },
-    { sku: "COKE-CRATE", name: "Coca-Cola 50cl", category: "Soft Drinks", inventoryUnit: "CRATE" },
-    { sku: "EVA-PACK", name: "Eva Table Water 75cl", category: "Water", inventoryUnit: "PACK" },
+    { sku: "HEIN-CRATE", name: "Heineken Premium Lager", category: "Beer", inventoryUnit: "CRATE", bulkUnit: "CRATE", pieceUnit: "BOTTLE", piecesPerBulk: 24 },
+    { sku: "GUIN-CRATE", name: "Guinness Foreign Extra Stout", category: "Stout", inventoryUnit: "CRATE", bulkUnit: "CRATE", pieceUnit: "BOTTLE", piecesPerBulk: 24 },
+    { sku: "MALT-PACK", name: "Maltina Classic (Pack)", category: "Malt", inventoryUnit: "PACK", bulkUnit: "PACK", pieceUnit: "CAN", piecesPerBulk: 12 },
+    { sku: "NUTRI-CRATE", name: "Nutri Milk Crate", category: "Dairy", inventoryUnit: "CRATE", bulkUnit: "CRATE", pieceUnit: "BOTTLE", piecesPerBulk: 24 },
+    { sku: "COKE-CRATE", name: "Coca-Cola 50cl", category: "Soft Drinks", inventoryUnit: "CRATE", bulkUnit: "CRATE", pieceUnit: "BOTTLE", piecesPerBulk: 24 },
+    { sku: "EVA-PACK", name: "Eva Table Water 75cl", category: "Water", inventoryUnit: "PACK", bulkUnit: "PACK", pieceUnit: "BOTTLE", piecesPerBulk: 12 },
   ];
 
   const seededProducts = [];
   for (const p of products) {
     const prod = await prisma.product.upsert({
       where: { sku: p.sku },
-      update: { name: p.name, category: p.category, inventoryUnit: p.inventoryUnit },
+      update: {
+        name: p.name,
+        category: p.category,
+        inventoryUnit: p.inventoryUnit,
+        bulkUnit: p.bulkUnit,
+        pieceUnit: p.pieceUnit,
+        piecesPerBulk: p.piecesPerBulk,
+      },
       create: p,
     });
     seededProducts.push(prod);
   }
-  console.log("✓ Product catalog seeded");
+  console.log("✓ Product catalog seeded with bulk and unit specifications");
 
   // 6. Branch Product pricing and initial stock
   const ownerEmp = await prisma.employee.findUnique({ where: { employeeNumber: "EMP-001" } });
 
   const mainPrices = {
-    "HEIN-CRATE": { price: 38000, stock: 120, reorder: 20 },
-    "GUIN-CRATE": { price: 34000, stock: 80, reorder: 15 },
-    "MALT-PACK": { price: 8500, stock: 95, reorder: 25 },
-    "NUTRI-CRATE": { price: 12000, stock: 45, reorder: 15 },
-    "COKE-CRATE": { price: 9000, stock: 110, reorder: 20 },
-    "EVA-PACK": { price: 3500, stock: 150, reorder: 30 },
+    "HEIN-CRATE": { price: 38000, piecePrice: 1700, stock: 120, reorder: 20 },
+    "GUIN-CRATE": { price: 34000, piecePrice: 1500, stock: 80, reorder: 15 },
+    "MALT-PACK": { price: 8500, piecePrice: 750, stock: 95, reorder: 25 },
+    "NUTRI-CRATE": { price: 12000, piecePrice: 550, stock: 45, reorder: 15 },
+    "COKE-CRATE": { price: 9000, piecePrice: 400, stock: 110, reorder: 20 },
+    "EVA-PACK": { price: 3500, piecePrice: 300, stock: 150, reorder: 30 },
   };
 
   const ikejaPrices = {
-    "HEIN-CRATE": { price: 38500, stock: 40, reorder: 15 },
-    "GUIN-CRATE": { price: 34500, stock: 35, reorder: 10 },
-    "MALT-PACK": { price: 8500, stock: 50, reorder: 20 },
-    "NUTRI-CRATE": { price: 12500, stock: 30, reorder: 10 },
-    "COKE-CRATE": { price: 9200, stock: 60, reorder: 15 },
-    "EVA-PACK": { price: 3500, stock: 80, reorder: 20 },
+    "HEIN-CRATE": { price: 38500, piecePrice: 1700, stock: 40, reorder: 15 },
+    "GUIN-CRATE": { price: 34500, piecePrice: 1550, stock: 35, reorder: 10 },
+    "MALT-PACK": { price: 8500, piecePrice: 750, stock: 50, reorder: 20 },
+    "NUTRI-CRATE": { price: 12500, piecePrice: 550, stock: 30, reorder: 10 },
+    "COKE-CRATE": { price: 9200, piecePrice: 400, stock: 60, reorder: 15 },
+    "EVA-PACK": { price: 3500, piecePrice: 300, stock: 80, reorder: 20 },
   };
 
   for (const prod of seededProducts) {
+    const piecesPerBulk = prod.piecesPerBulk || 1;
+
     // Main Branch
     const mConfig = mainPrices[prod.sku];
+    const mStockPieces = mConfig.stock * piecesPerBulk;
+    const mReorderPieces = mConfig.reorder * piecesPerBulk;
+
     const bpMain = await prisma.branchProduct.upsert({
       where: { branchId_productId: { branchId: mainBranch.id, productId: prod.id } },
-      update: { sellingPrice: mConfig.price, currentStock: mConfig.stock, reorderLevel: mConfig.reorder },
+      update: {
+        sellingPrice: mConfig.price,
+        piecePrice: mConfig.piecePrice,
+        currentStock: mStockPieces,
+        reorderLevel: mReorderPieces,
+      },
       create: {
         branchId: mainBranch.id,
         productId: prod.id,
         sellingPrice: mConfig.price,
-        currentStock: mConfig.stock,
-        reorderLevel: mConfig.reorder,
+        piecePrice: mConfig.piecePrice,
+        currentStock: mStockPieces,
+        reorderLevel: mReorderPieces,
       },
     });
 
@@ -337,7 +356,7 @@ async function main() {
           branchId: mainBranch.id,
           productId: prod.id,
           type: "OPENING_STOCK",
-          quantity: mConfig.stock,
+          quantity: mStockPieces,
           reason: "Initial physical inventory audit baseline",
           createdBy: ownerEmp.id,
         },
@@ -346,15 +365,24 @@ async function main() {
 
     // Ikeja Branch
     const iConfig = ikejaPrices[prod.sku];
+    const iStockPieces = iConfig.stock * piecesPerBulk;
+    const iReorderPieces = iConfig.reorder * piecesPerBulk;
+
     const bpIkeja = await prisma.branchProduct.upsert({
       where: { branchId_productId: { branchId: ikejaBranch.id, productId: prod.id } },
-      update: { sellingPrice: iConfig.price, currentStock: iConfig.stock, reorderLevel: iConfig.reorder },
+      update: {
+        sellingPrice: iConfig.price,
+        piecePrice: iConfig.piecePrice,
+        currentStock: iStockPieces,
+        reorderLevel: iReorderPieces,
+      },
       create: {
         branchId: ikejaBranch.id,
         productId: prod.id,
         sellingPrice: iConfig.price,
-        currentStock: iConfig.stock,
-        reorderLevel: iConfig.reorder,
+        piecePrice: iConfig.piecePrice,
+        currentStock: iStockPieces,
+        reorderLevel: iReorderPieces,
       },
     });
 
@@ -367,7 +395,7 @@ async function main() {
           branchId: ikejaBranch.id,
           productId: prod.id,
           type: "OPENING_STOCK",
-          quantity: iConfig.stock,
+          quantity: iStockPieces,
           reason: "Initial physical inventory audit baseline",
           createdBy: ownerEmp.id,
         },

@@ -107,3 +107,19 @@
 ::-webkit-scrollbar-thumb:hover {
   background: var(--surface-elevated);
 }
+
+@keyframes indeterminateProgress {
+  0% {
+    transform: translateX(-100%) scaleX(0.2);
+  }
+  50% {
+    transform: translateX(20%) scaleX(0.7);
+  }
+  100% {
+    transform: translateX(120%) scaleX(0.4);
+  }
+}
+
+.animate-progress-indeterminate {
+  animation: indeterminateProgress 1.2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}

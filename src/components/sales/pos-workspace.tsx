@@ -24,6 +24,9 @@ import {
   Sparkles,
   Keyboard,
   ShieldAlert,
+  Layers,
+  RefreshCw,
+  SlidersHorizontal,
 } from "lucide-react";
 import { formatNaira } from "@/lib/format";
 import { Button } from "@/components/ui/button";
@@ -219,6 +222,11 @@ export const POSWorkspace: React.FC<POSWorkspaceProps> = ({
   const [quickCreditLimit, setQuickCreditLimit] = useState("0");
   const [isQuickCreating, setIsQuickCreating] = useState(false);
   const [quickCreateError, setQuickCreateError] = useState<string | null>(null);
+
+  // Custom Quantity & Unit Selection modal
+  const [unitModalProduct, setUnitModalProduct] = useState<POSProduct | null>(null);
+  const [unitModalType, setUnitModalType] = useState<"BULK" | "PIECE">("BULK");
+  const [unitModalQty, setUnitModalQty] = useState<number>(1);
 
   // Success modal state
   const [completedSale, setCompletedSale] = useState<{
@@ -421,8 +429,12 @@ export const POSWorkspace: React.FC<POSWorkspaceProps> = ({
   }, [isExceedingCreditLimit, projectedTotalDebt, customerCreditLimit]);
 
   // Cart Management
-  const addToCart = (prod: POSProduct, unitType: "BULK" | "PIECE" = "BULK") => {
-    if (prod.currentStock <= 0) return;
+  const addToCart = (
+    prod: POSProduct,
+    unitType: "BULK" | "PIECE" = "BULK",
+    qtyToAdd: number = 1
+  ) => {
+    if (prod.currentStock <= 0 || qtyToAdd <= 0) return;
     setErrorMsg(null);
 
     const isPiece = unitType === "PIECE";
@@ -438,9 +450,10 @@ export const POSWorkspace: React.FC<POSWorkspaceProps> = ({
         .filter((i) => i.productId === prod.productId)
         .reduce((sum, i) => sum + i.quantity * i.piecesMultiplier, 0);
 
-      if (currentPiecesInCart + piecesMultiplier > prod.currentStock) {
+      const addedPieces = qtyToAdd * piecesMultiplier;
+      if (currentPiecesInCart + addedPieces > prod.currentStock) {
         setErrorMsg(
-          `Cannot add more ${prod.name}: Reached available branch stock limit (${formatStockDisplay(
+          `Cannot add ${qtyToAdd} ${unitName}(s) of ${prod.name}: Reached available branch stock limit (${formatStockDisplay(
             prod.currentStock,
             prod.bulkUnit,
             prod.pieceUnit,
@@ -453,7 +466,7 @@ export const POSWorkspace: React.FC<POSWorkspaceProps> = ({
       const existingIndex = prev.findIndex((item) => item.cartItemId === cartItemId);
       if (existingIndex >= 0) {
         return prev.map((item, idx) =>
-          idx === existingIndex ? { ...item, quantity: item.quantity + 1 } : item
+          idx === existingIndex ? { ...item, quantity: item.quantity + qtyToAdd } : item
         );
       }
 
@@ -466,10 +479,109 @@ export const POSWorkspace: React.FC<POSWorkspaceProps> = ({
           unitType,
           unitName,
           unitPrice,
-          quantity: 1,
+          quantity: qtyToAdd,
           piecesMultiplier,
         },
       ];
+    });
+  };
+
+  const setDirectQuantity = (cartItemId: string, rawQty: number) => {
+    setErrorMsg(null);
+    const targetQty = Math.max(1, Math.floor(rawQty || 1));
+    setCart((prev) => {
+      const item = prev.find((i) => i.cartItemId === cartItemId);
+      if (!item) return prev;
+      const prod = products.find((p) => p.productId === item.productId);
+      if (!prod) return prev;
+
+      const otherItemsPieces = prev
+        .filter((i) => i.productId === item.productId && i.cartItemId !== cartItemId)
+        .reduce((sum, i) => sum + i.quantity * i.piecesMultiplier, 0);
+
+      const requestedPieces = targetQty * item.piecesMultiplier;
+      if (otherItemsPieces + requestedPieces > prod.currentStock) {
+        setErrorMsg(
+          `Cannot set quantity to ${targetQty}: Exceeds available branch stock (${formatStockDisplay(
+            prod.currentStock,
+            prod.bulkUnit,
+            prod.pieceUnit,
+            prod.piecesPerBulk
+          )}).`
+        );
+        return prev;
+      }
+
+      return prev.map((i) =>
+        i.cartItemId === cartItemId ? { ...i, quantity: targetQty } : i
+      );
+    });
+  };
+
+  const switchItemUnit = (cartItemId: string) => {
+    setErrorMsg(null);
+    setCart((prev) => {
+      const item = prev.find((i) => i.cartItemId === cartItemId);
+      if (!item) return prev;
+      const prod = products.find((p) => p.productId === item.productId);
+      if (!prod) return prev;
+
+      const newUnit: "BULK" | "PIECE" = item.unitType === "BULK" ? "PIECE" : "BULK";
+      const isPiece = newUnit === "PIECE";
+      const newMultiplier = isPiece ? 1 : (prod.piecesPerBulk || 1);
+      const newPrice = isPiece
+        ? prod.piecePrice || Math.ceil(prod.sellingPrice / (prod.piecesPerBulk || 1))
+        : prod.sellingPrice;
+      const newUnitName = isPiece ? prod.pieceUnit : prod.bulkUnit;
+      const newCartItemId = `${prod.productId}_${newUnit}`;
+
+      let convertedQty = item.quantity;
+      if (item.unitType === "BULK" && newUnit === "PIECE") {
+        convertedQty = item.quantity * (prod.piecesPerBulk || 1);
+      } else if (item.unitType === "PIECE" && newUnit === "BULK") {
+        convertedQty = Math.max(1, Math.round(item.quantity / (prod.piecesPerBulk || 1)));
+      }
+
+      const otherItemsPieces = prev
+        .filter(
+          (i) =>
+            i.productId === item.productId &&
+            i.cartItemId !== cartItemId &&
+            i.cartItemId !== newCartItemId
+        )
+        .reduce((sum, i) => sum + i.quantity * i.piecesMultiplier, 0);
+
+      if (otherItemsPieces + convertedQty * newMultiplier > prod.currentStock) {
+        convertedQty = Math.max(
+          1,
+          Math.floor((prod.currentStock - otherItemsPieces) / newMultiplier)
+        );
+      }
+
+      const existingTarget = prev.find((i) => i.cartItemId === newCartItemId);
+      if (existingTarget) {
+        return prev
+          .filter((i) => i.cartItemId !== cartItemId)
+          .map((i) =>
+            i.cartItemId === newCartItemId
+              ? { ...i, quantity: i.quantity + convertedQty }
+              : i
+          );
+      }
+
+      return prev.map((i) =>
+        i.cartItemId === cartItemId
+          ? {
+              ...i,
+              cartItemId: newCartItemId,
+              unitType: newUnit,
+              unitName: newUnitName,
+              unitPrice: newPrice,
+              quantity: convertedQty,
+              piecesMultiplier: newMultiplier,
+            }
+          : i
+      );
     });
   };
 
@@ -749,7 +861,8 @@ export const POSWorkspace: React.FC<POSWorkspaceProps> = ({
 
       // Esc: Close open modals or clear search
       if (e.key === "Escape") {
-        if (openSessionModalOpen) setOpenSessionModalOpen(false);
+        if (unitModalProduct) setUnitModalProduct(null);
+        else if (openSessionModalOpen) setOpenSessionModalOpen(false);
         else if (closeSessionModalOpen) setCloseSessionModalOpen(false);
         else if (payoutModalOpen) setPayoutModalOpen(false);
         else if (quickCustomerModalOpen) setQuickCustomerModalOpen(false);
@@ -763,6 +876,7 @@ export const POSWorkspace: React.FC<POSWorkspaceProps> = ({
   }, [
     cart.length,
     isSubmitting,
+    unitModalProduct,
     openSessionModalOpen,
     closeSessionModalOpen,
     payoutModalOpen,
@@ -1054,7 +1168,9 @@ export const POSWorkspace: React.FC<POSWorkspaceProps> = ({
                 const isOutOfStock = p.currentStock <= 0;
                 const isLowStock = p.currentStock <= p.reorderLevel;
 
-                const hasMultiUnit = (p.piecesPerBulk || 1) > 1 && p.piecePrice;
+                const hasMultiUnit = (p.piecesPerBulk || 1) > 1;
+                const effectivePiecePrice =
+                  p.piecePrice || Math.ceil(p.sellingPrice / (p.piecesPerBulk || 1));
 
                 return (
                   <div
@@ -1096,96 +1212,131 @@ export const POSWorkspace: React.FC<POSWorkspaceProps> = ({
                       </div>
                     </div>
 
-                    <div className="mt-3 pt-2 border-t border-border/60">
+                    <div className="mt-3 pt-2 border-t border-border/60 space-y-1.5">
                       {hasMultiUnit ? (
-                        /* Dual Quick-Buttons for Instant Cashier Speed */
-                        <div className="grid grid-cols-2 gap-1.5">
-                          {/* Bulk Unit Button */}
-                          <button
-                            type="button"
-                            disabled={!canAddBulk}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              addToCart(p, "BULK");
-                            }}
-                            className={`p-1.5 rounded-subtle text-left transition-all border flex flex-col justify-between ${
-                              !canAddBulk
-                                ? "opacity-35 border-border bg-surface-elevated/20 cursor-not-allowed text-text-muted"
-                                : bulkQtyInCart > 0
-                                ? "bg-brand/15 border-brand/50 text-text-primary shadow-sm"
-                                : "bg-surface-elevated hover:bg-brand hover:text-white border-border text-text-primary group"
-                            }`}
-                          >
-                            <div className="flex items-center justify-between">
-                              <span className="text-[10px] font-bold uppercase tracking-wider text-text-secondary group-hover:text-white">
-                                + {p.bulkUnit}
-                              </span>
-                              {bulkQtyInCart > 0 && (
-                                <span className="text-[9px] font-bold px-1.5 py-0.2 rounded-full bg-brand text-white">
-                                  {bulkQtyInCart}
+                        /* Dual Quick-Buttons for Instant Bulk or Piece Selling */
+                        <div>
+                          <div className="grid grid-cols-2 gap-1.5">
+                            {/* Bulk Unit Button */}
+                            <button
+                              type="button"
+                              disabled={!canAddBulk}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                addToCart(p, "BULK", 1);
+                              }}
+                              className={`p-1.5 rounded-subtle text-left transition-all border flex flex-col justify-between ${
+                                !canAddBulk
+                                  ? "opacity-35 border-border bg-surface-elevated/20 cursor-not-allowed text-text-muted"
+                                  : bulkQtyInCart > 0
+                                  ? "bg-brand/15 border-brand/50 text-text-primary shadow-xs"
+                                  : "bg-surface-elevated hover:bg-brand hover:text-white border-border text-text-primary group"
+                              }`}
+                            >
+                              <div className="flex items-center justify-between">
+                                <span className="text-[10px] font-bold uppercase tracking-wider text-text-secondary group-hover:text-white">
+                                  + 1 {p.bulkUnit}
                                 </span>
-                              )}
-                            </div>
-                            <span className="text-xs font-bold mt-1">
-                              {formatNaira(p.sellingPrice)}
-                            </span>
-                          </button>
+                                {bulkQtyInCart > 0 && (
+                                  <span className="text-[9px] font-bold px-1.5 py-0.2 rounded-full bg-brand text-white">
+                                    {bulkQtyInCart}
+                                  </span>
+                                )}
+                              </div>
+                              <span className="text-xs font-bold mt-1">
+                                {formatNaira(p.sellingPrice)}
+                              </span>
+                            </button>
 
-                          {/* Loose Piece Button */}
+                            {/* Loose Piece Button */}
+                            <button
+                              type="button"
+                              disabled={!canAddPiece}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                addToCart(p, "PIECE", 1);
+                              }}
+                              className={`p-1.5 rounded-subtle text-left transition-all border flex flex-col justify-between ${
+                                !canAddPiece
+                                  ? "opacity-35 border-border bg-surface-elevated/20 cursor-not-allowed text-text-muted"
+                                  : pieceQtyInCart > 0
+                                  ? "bg-brand/15 border-brand/50 text-text-primary shadow-xs"
+                                  : "bg-surface-elevated hover:bg-brand hover:text-white border-border text-text-primary group"
+                              }`}
+                            >
+                              <div className="flex items-center justify-between">
+                                <span className="text-[10px] font-bold uppercase tracking-wider text-text-secondary group-hover:text-white">
+                                  + 1 {p.pieceUnit}
+                                </span>
+                                {pieceQtyInCart > 0 && (
+                                  <span className="text-[9px] font-bold px-1.5 py-0.2 rounded-full bg-brand text-white">
+                                    {pieceQtyInCart}
+                                  </span>
+                                )}
+                              </div>
+                              <span className="text-xs font-bold mt-1">
+                                {formatNaira(effectivePiecePrice)}
+                              </span>
+                            </button>
+                          </div>
+
+                          {/* Quick Custom Qty Modal Trigger */}
                           <button
                             type="button"
-                            disabled={!canAddPiece}
+                            disabled={remainingStockPieces <= 0}
                             onClick={(e) => {
                               e.stopPropagation();
-                              addToCart(p, "PIECE");
+                              setUnitModalProduct(p);
+                              setUnitModalType("BULK");
+                              setUnitModalQty(1);
                             }}
-                            className={`p-1.5 rounded-subtle text-left transition-all border flex flex-col justify-between ${
-                              !canAddPiece
-                                ? "opacity-35 border-border bg-surface-elevated/20 cursor-not-allowed text-text-muted"
-                                : pieceQtyInCart > 0
-                                ? "bg-brand/15 border-brand/50 text-text-primary shadow-sm"
-                                : "bg-surface-elevated hover:bg-brand hover:text-white border-border text-text-primary group"
-                            }`}
+                            className="w-full mt-1.5 py-1 px-2 rounded-subtle bg-surface-elevated/40 hover:bg-surface-elevated border border-border hover:border-brand/40 text-[10px] text-text-secondary hover:text-text-primary font-medium flex items-center justify-center gap-1 transition-colors"
                           >
-                            <div className="flex items-center justify-between">
-                              <span className="text-[10px] font-bold uppercase tracking-wider text-text-secondary group-hover:text-white">
-                                + {p.pieceUnit}
-                              </span>
-                              {pieceQtyInCart > 0 && (
-                                <span className="text-[9px] font-bold px-1.5 py-0.2 rounded-full bg-brand text-white">
-                                  {pieceQtyInCart}
-                                </span>
-                              )}
-                            </div>
-                            <span className="text-xs font-bold mt-1">
-                              {formatNaira(p.piecePrice || 0)}
-                            </span>
+                            <SlidersHorizontal className="w-3 h-3 text-brand" />
+                            <span>Custom Quantity / Select Unit</span>
                           </button>
                         </div>
                       ) : (
-                        /* Single Button for Standard 1:1 products */
-                        <div className="flex items-center justify-between">
+                        /* Standard 1:1 products */
+                        <div className="flex items-center justify-between gap-1.5">
                           <div className="text-sm font-bold text-text-primary">
                             {formatNaira(p.sellingPrice)}
                           </div>
-                          <button
-                            type="button"
-                            disabled={!canAddBulk}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              addToCart(p, "BULK");
-                            }}
-                            className={`h-7 px-3 rounded-subtle text-xs font-medium flex items-center gap-1 transition-colors ${
-                              !canAddBulk
-                                ? "opacity-40 bg-surface-elevated text-text-muted cursor-not-allowed border border-border"
-                                : bulkQtyInCart > 0
-                                ? "bg-brand text-white"
-                                : "bg-surface-elevated hover:bg-brand hover:text-white text-text-primary border border-border"
-                            }`}
-                          >
-                            <Plus className="w-3.5 h-3.5" />
-                            {bulkQtyInCart > 0 ? `${bulkQtyInCart} in cart` : "Add"}
-                          </button>
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              disabled={!canAddBulk}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setUnitModalProduct(p);
+                                setUnitModalType("BULK");
+                                setUnitModalQty(1);
+                              }}
+                              className="h-7 px-2 rounded-subtle bg-surface-elevated/60 hover:bg-surface-elevated border border-border text-[11px] text-text-secondary hover:text-text-primary font-medium flex items-center gap-1 transition-colors"
+                              title="Enter custom quantity"
+                            >
+                              <SlidersHorizontal className="w-3 h-3 text-brand" />
+                              <span>Qty</span>
+                            </button>
+                            <button
+                              type="button"
+                              disabled={!canAddBulk}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                addToCart(p, "BULK", 1);
+                              }}
+                              className={`h-7 px-3 rounded-subtle text-xs font-medium flex items-center gap-1 transition-colors ${
+                                !canAddBulk
+                                  ? "opacity-40 bg-surface-elevated text-text-muted cursor-not-allowed border border-border"
+                                  : bulkQtyInCart > 0
+                                  ? "bg-brand text-white"
+                                  : "bg-surface-elevated hover:bg-brand hover:text-white text-text-primary border border-border"
+                              }`}
+                            >
+                              <Plus className="w-3.5 h-3.5" />
+                              {bulkQtyInCart > 0 ? `${bulkQtyInCart} in cart` : "Add"}
+                            </button>
+                          </div>
                         </div>
                       )}
                     </div>
@@ -1257,68 +1408,93 @@ export const POSWorkspace: React.FC<POSWorkspaceProps> = ({
                   Cart is empty. Select products from the inventory catalog on the left.
                 </div>
               ) : (
-                cart.map((item) => (
-                  <div
-                    key={item.cartItemId}
-                    className="p-2.5 rounded-subtle bg-surface-elevated/40 border border-border flex items-center justify-between gap-3 text-xs"
-                  >
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-1.5">
-                        <p className="font-semibold text-text-primary truncate">
-                          {item.name}
-                        </p>
-                        <span
-                          className={`px-1.5 py-0.2 rounded text-[9px] font-bold uppercase tracking-wider ${
-                            item.unitType === "BULK"
-                              ? "bg-brand/20 text-brand border border-brand/30"
-                              : "bg-surface-elevated text-text-secondary border border-border"
-                          }`}
-                        >
-                          {item.unitName}
-                        </span>
-                      </div>
-                      <p className="text-[10px] text-text-muted mt-0.5">
-                        {formatNaira(item.unitPrice)} / {item.unitName}
-                      </p>
-                    </div>
+                cart.map((item) => {
+                  const product = products.find((p) => p.productId === item.productId);
+                  const isMultiUnit = product && (product.piecesPerBulk || 1) > 1;
 
-                    {/* Quantity Selector */}
-                    <div className="flex items-center gap-1.5 shrink-0">
-                      <button
-                        type="button"
-                        onClick={() => updateQuantity(item.cartItemId, -1)}
-                        className="w-6 h-6 rounded-subtle bg-surface border border-border flex items-center justify-center text-text-secondary hover:text-text-primary"
-                      >
-                        <Minus className="w-3 h-3" />
-                      </button>
-                      <span className="w-6 text-center font-bold text-text-primary">
-                        {item.quantity}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => updateQuantity(item.cartItemId, 1)}
-                        className="w-6 h-6 rounded-subtle bg-surface border border-border flex items-center justify-center text-text-secondary hover:text-text-primary"
-                      >
-                        <Plus className="w-3 h-3" />
-                      </button>
-                    </div>
-
-                    {/* Line Total */}
-                    <div className="text-right shrink-0 min-w-[70px]">
-                      <div className="font-bold text-text-primary">
-                        {formatNaira(item.unitPrice * item.quantity)}
-                      </div>
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={() => removeItem(item.cartItemId)}
-                      className="text-text-muted hover:text-status-danger p-1"
+                  return (
+                    <div
+                      key={item.cartItemId}
+                      className="p-2.5 rounded-subtle bg-surface-elevated/40 border border-border flex items-center justify-between gap-3 text-xs"
                     >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                ))
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <p className="font-semibold text-text-primary truncate max-w-[130px]">
+                            {item.name}
+                          </p>
+                          <span
+                            className={`px-1.5 py-0.2 rounded text-[9px] font-bold uppercase tracking-wider ${
+                              item.unitType === "BULK"
+                                ? "bg-brand/20 text-brand border border-brand/30"
+                                : "bg-sky-500/20 text-sky-300 border border-sky-500/30"
+                            }`}
+                          >
+                            {item.unitName}
+                          </span>
+                          {isMultiUnit && (
+                            <button
+                              type="button"
+                              onClick={() => switchItemUnit(item.cartItemId)}
+                              title={`Switch unit to ${
+                                item.unitType === "BULK" ? product.pieceUnit : product.bulkUnit
+                              }`}
+                              className="inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded bg-surface hover:bg-brand/20 text-text-muted hover:text-brand border border-border hover:border-brand/40 transition-colors"
+                            >
+                              <RefreshCw className="w-2.5 h-2.5" />
+                              <span>⇄ {item.unitType === "BULK" ? product.pieceUnit : product.bulkUnit}</span>
+                            </button>
+                          )}
+                        </div>
+                        <p className="text-[10px] text-text-muted mt-0.5 font-mono">
+                          {formatNaira(item.unitPrice)} / {item.unitName}
+                        </p>
+                      </div>
+
+                      {/* Quantity Selector with Editable Input */}
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => updateQuantity(item.cartItemId, -1)}
+                          className="w-6 h-6 rounded-subtle bg-surface border border-border flex items-center justify-center text-text-secondary hover:text-text-primary"
+                        >
+                          <Minus className="w-3 h-3" />
+                        </button>
+                        <input
+                          type="number"
+                          min="1"
+                          value={item.quantity}
+                          onChange={(e) =>
+                            setDirectQuantity(item.cartItemId, parseInt(e.target.value) || 1)
+                          }
+                          className="w-12 h-6 text-center font-bold text-xs bg-surface border border-border rounded px-0.5 text-text-primary font-mono focus:outline-none focus:ring-1 focus:ring-brand [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => updateQuantity(item.cartItemId, 1)}
+                          className="w-6 h-6 rounded-subtle bg-surface border border-border flex items-center justify-center text-text-secondary hover:text-text-primary"
+                        >
+                          <Plus className="w-3 h-3" />
+                        </button>
+                      </div>
+
+                      {/* Line Total */}
+                      <div className="text-right shrink-0 min-w-[70px]">
+                        <div className="font-bold text-text-primary font-mono">
+                          {formatNaira(item.unitPrice * item.quantity)}
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => removeItem(item.cartItemId)}
+                        className="text-text-muted hover:text-status-danger p-1"
+                        title="Remove item"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  );
+                })
               )}
             </div>
 
@@ -2165,6 +2341,226 @@ export const POSWorkspace: React.FC<POSWorkspaceProps> = ({
                 </Button>
               </div>
             </form>
+          </Card>
+        </div>
+      )}
+
+      {/* Custom Quantity & Unit Selection Modal */}
+      {unitModalProduct && (
+        <div className="fixed inset-0 bg-black/75 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+          <Card className="bg-surface border-border max-w-md w-full p-5 shadow-2xl animate-scaleUp">
+            <div className="space-y-4">
+              <div className="flex items-center justify-between pb-3 border-b border-border">
+                <div className="flex items-center gap-2">
+                  <Layers className="w-4 h-4 text-brand" />
+                  <div>
+                    <h3 className="text-sm font-bold text-text-primary">
+                      Add to Sale: {unitModalProduct.name}
+                    </h3>
+                    <p className="text-[11px] font-mono text-text-muted">
+                      SKU: {unitModalProduct.sku}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setUnitModalProduct(null)}
+                  className="text-text-muted hover:text-text-primary p-1"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* Stock Status Banner */}
+              <div className="p-2.5 rounded-subtle bg-surface-elevated/60 border border-border flex items-center justify-between text-xs">
+                <span className="text-text-secondary">Available Stock:</span>
+                <span className="font-semibold text-text-primary">
+                  {formatStockDisplay(
+                    unitModalProduct.currentStock,
+                    unitModalProduct.bulkUnit,
+                    unitModalProduct.pieceUnit,
+                    unitModalProduct.piecesPerBulk
+                  )}
+                </span>
+              </div>
+
+              {/* Unit Type Selection */}
+              <div>
+                <label className="block text-[11px] font-semibold text-text-secondary uppercase tracking-wider mb-2">
+                  Select Selling Unit
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  {/* Bulk Unit */}
+                  <button
+                    type="button"
+                    onClick={() => setUnitModalType("BULK")}
+                    className={`p-3 rounded-lg border text-left transition-all ${
+                      unitModalType === "BULK"
+                        ? "bg-brand/20 border-brand text-white shadow-xs"
+                        : "bg-surface-elevated/40 border-border text-text-secondary hover:text-text-primary"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold uppercase">
+                        {unitModalProduct.bulkUnit}
+                      </span>
+                      {unitModalProduct.piecesPerBulk > 1 && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-surface border border-border text-text-muted">
+                          {unitModalProduct.piecesPerBulk} {unitModalProduct.pieceUnit}s
+                        </span>
+                      )}
+                    </div>
+                    <div className="mt-1 text-sm font-bold text-text-primary font-mono">
+                      {formatNaira(unitModalProduct.sellingPrice)}
+                    </div>
+                  </button>
+
+                  {/* Loose Piece Unit */}
+                  {unitModalProduct.piecesPerBulk > 1 ? (
+                    <button
+                      type="button"
+                      onClick={() => setUnitModalType("PIECE")}
+                      className={`p-3 rounded-lg border text-left transition-all ${
+                        unitModalType === "PIECE"
+                          ? "bg-brand/20 border-brand text-white shadow-xs"
+                          : "bg-surface-elevated/40 border-border text-text-secondary hover:text-text-primary"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold uppercase">
+                          {unitModalProduct.pieceUnit} (Loose)
+                        </span>
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-surface border border-border text-text-muted">
+                          1 unit
+                        </span>
+                      </div>
+                      <div className="mt-1 text-sm font-bold text-text-primary font-mono">
+                        {formatNaira(
+                          unitModalProduct.piecePrice ||
+                            Math.ceil(
+                              unitModalProduct.sellingPrice /
+                                (unitModalProduct.piecesPerBulk || 1)
+                            )
+                        )}
+                      </div>
+                    </button>
+                  ) : (
+                    <div className="p-3 rounded-lg border border-dashed border-border/60 bg-surface-elevated/10 text-text-muted text-xs flex items-center justify-center text-center">
+                      Single piece pricing not configured
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Quantity Input with Quick Chips */}
+              <div>
+                <label className="block text-[11px] font-semibold text-text-secondary uppercase tracking-wider mb-2">
+                  Quantity ({unitModalType === "BULK" ? unitModalProduct.bulkUnit : unitModalProduct.pieceUnit})
+                </label>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setUnitModalQty(Math.max(1, unitModalQty - 1))}
+                    className="w-10 h-10 rounded-lg bg-surface-elevated border border-border flex items-center justify-center text-text-primary hover:bg-surface-hover"
+                  >
+                    <Minus className="w-4 h-4" />
+                  </button>
+                  <input
+                    type="number"
+                    min="1"
+                    value={unitModalQty}
+                    onChange={(e) =>
+                      setUnitModalQty(Math.max(1, parseInt(e.target.value) || 1))
+                    }
+                    className="flex-1 h-10 text-center font-bold text-base bg-surface-elevated border border-border rounded-lg text-text-primary focus:outline-none focus:ring-1 focus:ring-brand font-mono"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setUnitModalQty(unitModalQty + 1)}
+                    className="w-10 h-10 rounded-lg bg-surface-elevated border border-border flex items-center justify-center text-text-primary hover:bg-surface-hover"
+                  >
+                    <Plus className="w-4 h-4" />
+                  </button>
+                </div>
+
+                {/* Quick Quantity Chips */}
+                <div className="flex flex-wrap items-center gap-1.5 mt-2.5">
+                  {[1, 2, 5, 6, 12, 24, 50].map((preset) => (
+                    <button
+                      key={preset}
+                      type="button"
+                      onClick={() => setUnitModalQty(preset)}
+                      className={`text-[11px] font-bold px-2.5 py-1 rounded-md border transition-colors ${
+                        unitModalQty === preset
+                          ? "bg-brand text-white border-brand"
+                          : "bg-surface-elevated border-border text-text-secondary hover:text-text-primary hover:border-brand/40"
+                      }`}
+                    >
+                      {preset}
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => setUnitModalQty(unitModalQty + 10)}
+                    className="text-[11px] font-bold px-2.5 py-1 rounded-md border bg-surface-elevated border-border text-text-secondary hover:text-text-primary"
+                  >
+                    +10
+                  </button>
+                </div>
+              </div>
+
+              {/* Live Cost Calculation Summary */}
+              {(() => {
+                const currentUnitPrice =
+                  unitModalType === "PIECE"
+                    ? unitModalProduct.piecePrice ||
+                      Math.ceil(
+                        unitModalProduct.sellingPrice /
+                          (unitModalProduct.piecesPerBulk || 1)
+                      )
+                    : unitModalProduct.sellingPrice;
+                const totalItemCost = currentUnitPrice * unitModalQty;
+                return (
+                  <div className="p-3 rounded-lg bg-surface-elevated/70 border border-border flex items-center justify-between">
+                    <div>
+                      <span className="text-[11px] text-text-muted">Line Total:</span>
+                      <p className="text-xs text-text-secondary font-medium">
+                        {unitModalQty} x {formatNaira(currentUnitPrice)}
+                      </p>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-base font-bold text-brand font-mono">
+                        {formatNaira(totalItemCost)}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              <div className="flex items-center gap-2 pt-2 border-t border-border">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setUnitModalProduct(null)}
+                  className="flex-1 text-xs"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="button"
+                  variant="primary"
+                  size="sm"
+                  onClick={() => {
+                    addToCart(unitModalProduct, unitModalType, unitModalQty);
+                    setUnitModalProduct(null);
+                  }}
+                  className="flex-1 text-xs font-bold"
+                >
+                  Add {unitModalQty} {unitModalType === "BULK" ? unitModalProduct.bulkUnit : unitModalProduct.pieceUnit} to Cart
+                </Button>
+              </div>
+            </div>
           </Card>
         </div>
       )}
